@@ -124,17 +124,17 @@ button{font:inherit;cursor:pointer}
   border-radius:22px;background:#0a1c33;
   box-shadow:inset 0 0 0 3px rgba(251,191,36,.36),0 20px 50px rgba(2,6,23,.65);
 }
-.st-coord{fill:#fef08a;font:900 15px "Segoe UI",Arial,sans-serif;text-anchor:middle;dominant-baseline:central;pointer-events:none}
+.st-coord{fill:#000000;font:900 16px "Segoe UI",Arial,sans-serif;text-anchor:middle;dominant-baseline:central;pointer-events:none;paint-order:stroke;stroke:#fef9c3;stroke-width:5;stroke-linejoin:round}
 .st-cell{transition:opacity .2s}
 .st-cell.can{cursor:pointer}
 .st-cell.can .st-hl{fill:var(--act-bg,rgba(74,222,128,.22));stroke:var(--act,#4ade80);stroke-width:3.5;stroke-dasharray:8 5;animation:march 1.2s linear infinite}
 .st-cell.can:hover .st-hl{stroke:#fde047;stroke-width:4.5}
 .st-cell.cur .st-hl{stroke:#fff;stroke-width:4.5;stroke-dasharray:none;fill:rgba(255,255,255,.18)}
 @keyframes march{to{stroke-dashoffset:-26}}
-.st-lbl{fill:rgba(255,255,255,.8);font:800 11px "Segoe UI",Arial,sans-serif;pointer-events:none;paint-order:stroke;stroke:#091322;stroke-width:2.5}
-.st-stat{fill:#f8fafc;font:900 10.5px "Segoe UI",Arial,sans-serif;text-anchor:end;pointer-events:none;paint-order:stroke;stroke:#091322;stroke-width:2.5}
+.st-lbl{fill:#000000;font:900 12.5px "Segoe UI",Arial,sans-serif;pointer-events:none;paint-order:stroke;stroke:#ffffff;stroke-width:3.8;stroke-linejoin:round}
+.st-stat{fill:#000000;font:900 10.5px "Segoe UI",Arial,sans-serif;text-anchor:end;pointer-events:none;paint-order:stroke;stroke:#ffffff;stroke-width:3.2;stroke-linejoin:round}
 .st-ico{font-size:24px;text-anchor:middle;dominant-baseline:central;pointer-events:none}
-.st-vname{fill:#fef08a;font:900 10px "Segoe UI",Arial,sans-serif;text-anchor:middle;pointer-events:none;paint-order:stroke;stroke:#091322;stroke-width:2.8}
+.st-vname{fill:#000000;font:900 10.5px "Segoe UI",Arial,sans-serif;text-anchor:middle;pointer-events:none;paint-order:stroke;stroke:#fef9c3;stroke-width:3.6;stroke-linejoin:round}
 
 /* ---------- Thanh chọn Hành Động theo Độ Khó ở đáy màn hình ---------- */
 #actionbar{
@@ -825,6 +825,10 @@ function recomputeFloodState(allowSpread = false) {
   }
 }
 
+const BASE_STRUCTURES = 10;   // Địa hình núi/rừng tự nhiên có sẵn ban đầu (dãy H + đồi D)
+const BASE_LAND_FLOODED = 2;  // 2 cửa sông B2 & B5 ngập sẵn ban đầu
+const BASE_MAX_COL = 1;       // Cột B có sẵn nước ban đầu
+
 function getMapStats() {
   const m = G.map;
   let safeVillages = 0, floodedVillages = 0, landFlooded = 0, maxCol = 0, structures = 0;
@@ -845,16 +849,33 @@ function getMapStats() {
       }
     }
   }
-  return { safeVillages, floodedVillages, landFlooded, maxCol, maxColName: maxCol > 0 ? COL_NAMES[maxCol] : "A", structures, floodedVNames };
+  const newStructures = Math.max(0, structures - BASE_STRUCTURES);
+  const newLandFlooded = Math.max(0, landFlooded - BASE_LAND_FLOODED);
+  const colAdvance = Math.max(0, maxCol - BASE_MAX_COL);
+  return {
+    safeVillages, floodedVillages, landFlooded, newLandFlooded,
+    maxCol, colAdvance, maxColName: maxCol > 0 ? COL_NAMES[maxCol] : "A",
+    structures, newStructures, floodedVNames
+  };
 }
 
 function computeFactionScores() {
   const st = getMapStats();
   const sonTeamPts = G.teams.filter(t => t.side === "son").reduce((a, t) => a + t.score, 0);
   const thuyTeamPts = G.teams.filter(t => t.side === "thuy").reduce((a, t) => a + t.score, 0);
-  const sonTotal = sonTeamPts + st.safeVillages * 200 + st.structures * 20;
-  const thuyTotal = thuyTeamPts + st.floodedVillages * 200 + st.landFlooded * 35 + st.maxCol * 50;
-  return { sonTotal, thuyTotal, sonTeamPts, thuyTeamPts, st };
+  // Khởi đầu trận: cả 2 phe đều bằng nhau (0đ = 0đ), tăng điểm cân bằng theo thành tích & biến đổi bản đồ!
+  const sonBuildPts = st.newStructures * 35;
+  const sonVillagePts = G.sonVillageBonus || 0;
+  const sonTotal = sonTeamPts + sonBuildPts + sonVillagePts;
+
+  const thuyFloodPts = st.newLandFlooded * 45;
+  const thuyColPts = st.colAdvance * 70;
+  const thuyVillagePts = st.floodedVillages * 220;
+  const thuyTotal = thuyTeamPts + thuyFloodPts + thuyColPts + thuyVillagePts;
+  return {
+    sonTotal, thuyTotal, sonTeamPts, thuyTeamPts,
+    sonBuildPts, sonVillagePts, thuyFloodPts, thuyColPts, thuyVillagePts, st
+  };
 }
 
 /* =================== Trạng thái trò chơi =================== */
@@ -866,6 +887,7 @@ const G = {
   teams: [],
   round: 1,       // 1..S.rounds
   turnInRound: 0, // 0..teams.length-1
+  sonVillageBonus: 0, // Thưởng giữ yên bản làng cộng sau mỗi vòng hoàn thành
   cur: 0,
   actor: 0,
   selectedAct: null,
@@ -1076,7 +1098,7 @@ function newGame() {
     name: (savedNames && savedNames[i]) || p.name,
     score: 0, correct: 0, answered: 0, builds: 0, floods: 0
   }));
-  G.round = 1; G.turnInRound = 0; G.cur = 0; G.actor = 0; G.qCount = 0;
+  G.round = 1; G.turnInRound = 0; G.sonVillageBonus = 0; G.cur = 0; G.actor = 0; G.qCount = 0;
   G.selectedAct = null; G.validTargets = []; G.validSet = new Set(); G.cursor = null; G.target = null;
   if (window.World3D && World3D.isActive()) World3D.rebuild();
   renderAll();
@@ -1151,12 +1173,12 @@ function renderSidebar() {
     <div class="fbox son">
       <div class="ftitle">⛰️ Phe Sơn Tinh</div>
       <div class="fpts">${fs.sonTotal}đ</div>
-      <div class="fsub">🏘️ Giữ ${fs.st.safeVillages}/5 làng · 🏗 ${fs.st.structures}</div>
+      <div class="fsub">🏘️ Giữ ${fs.st.safeVillages}/5 làng · 🏗 +${fs.st.newStructures}</div>
     </div>
     <div class="fbox thuy">
       <div class="ftitle">🌊 Phe Thủy Tinh</div>
       <div class="fpts">${fs.thuyTotal}đ</div>
-      <div class="fsub">🌊 Ngập ${fs.st.floodedVillages}/5 làng · Tới ${fs.st.maxColName}</div>
+      <div class="fsub">🌊 Ngập ${fs.st.floodedVillages}/5 làng · +${fs.st.newLandFlooded} ô</div>
     </div>
   </div>`;
 
@@ -1667,6 +1689,10 @@ function proceedTurn(toast = "") {
   G.turnInRound++;
   if (G.turnInRound >= G.teams.length) {
     G.turnInRound = 0;
+    // Thưởng Phe Sơn Tinh giữ yên bản làng sau khi vượt qua trọn vẹn 1 vòng đấu
+    const keepBonus = st.safeVillages * 25;
+    G.sonVillageBonus += keepBonus;
+    toast = `🏘️ Hết Vòng ${G.round}: Sơn Tinh giữ ${st.safeVillages}/5 làng (+${keepBonus}đ)!` + (toast ? " · " + toast : "");
     G.round++;
   }
   G.cur = G.turnInRound;
@@ -1692,7 +1718,7 @@ function endGame(reason) {
     : thuyWins ? "PHE THỦY TINH ĐẠI THẮNG!" : "NÚI VÀ NƯỚC BẤT PHÂN THẮNG BẠI!";
   $("#endSub").textContent = reason === "flood_all"
     ? `Thủy Tinh đã nhấn chìm toàn bộ 5/5 khu dân cư trước khi hết ${S.rounds} vòng đấu!`
-    : `Kết thúc ${S.rounds} vòng đại chiến — Sơn Tinh bảo vệ được ${st.safeVillages}/5 bản làng; Thủy Tinh đưa nước tiến tới cột ${st.maxColName} (${st.landFlooded} ô đất liền ngập).`;
+    : `Kết thúc ${S.rounds} vòng đại chiến — Sơn Tinh bảo vệ được ${st.safeVillages}/5 bản làng; Thủy Tinh đưa nước tiến tới cột ${st.maxColName} (+${st.newLandFlooded} ô đất liền ngập mới).`;
 
   const safeNames = VILLAGES.filter(v => !G.map.cells[v.y][v.x].flooded).map(v => v.name);
   const floodNames = st.floodedVNames;
@@ -1702,18 +1728,18 @@ function endGame(reason) {
       <div class="ef-head"><span>⛰️ PHE SƠN TINH</span><span>${sonWins ? "🏆 CHIẾN THẮNG" : ""}</span></div>
       <div class="ef-score">${fs.sonTotal} điểm chiến dịch</div>
       <div class="ef-meta">
-        • Bảo vệ thành công: <b>${st.safeVillages}/5 khu dân cư</b> (+${st.safeVillages * 200}đ)<br>
+        • Bảo vệ thành công: <b>${st.safeVillages}/5 khu dân cư</b> (thưởng giữ làng: +${fs.sonVillagePts}đ)<br>
         • Làng an toàn: ${safeNames.length ? esc(safeNames.join(", ")) : "Không còn"}<br>
-        • Công trình núi/đê/rừng: <b>${st.structures}</b> (+${st.structures * 20}đ) · Điểm câu hỏi: <b>${fs.sonTeamPts}đ</b>
+        • Công trình xây mới: <b>+${st.newStructures}</b> (+${fs.sonBuildPts}đ) · Điểm câu hỏi: <b>${fs.sonTeamPts}đ</b>
       </div>
     </div>
     <div class="ef-card thuy ${thuyWins ? "win" : ""}">
       <div class="ef-head"><span>🌊 PHE THỦY TINH</span><span>${thuyWins ? "🏆 CHIẾN THẮNG" : ""}</span></div>
       <div class="ef-score">${fs.thuyTotal} điểm chiến dịch</div>
       <div class="ef-meta">
-        • Bản làng bị ngập: <b>${st.floodedVillages}/5 khu dân cư</b> (+${st.floodedVillages * 200}đ)<br>
+        • Bản làng bị ngập: <b>${st.floodedVillages}/5 khu dân cư</b> (+${fs.thuyVillagePts}đ)<br>
         • Làng bị nhấn chìm: ${floodNames.length ? esc(floodNames.join(", ")) : "Chưa có"}<br>
-        • Đưa nước tới cột <b>${st.maxColName}</b> (+${st.maxCol * 50}đ) · Ngập <b>${st.landFlooded}</b> ô (+${st.landFlooded * 35}đ) · Câu hỏi: <b>${fs.thuyTeamPts}đ</b>
+        • Tiến thêm <b>+${st.colAdvance}</b> cột (tới ${st.maxColName}: +${fs.thuyColPts}đ) · Ngập mới <b>+${st.newLandFlooded}</b> ô (+${fs.thuyFloodPts}đ) · Câu hỏi: <b>${fs.thuyTeamPts}đ</b>
       </div>
     </div>`;
 
